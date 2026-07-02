@@ -109,8 +109,14 @@ function setupSpeechRecognition() {
     recognition.interimResults = true;
     recognition.lang = 'en-US';
     
+    // Track accumulated text that hasn't been finalized yet
+    let accumulatedInterim = '';
+    let lastFinalText = '';
+    
     recognition.onstart = () => {
         isRecording = true;
+        accumulatedInterim = '';
+        lastFinalText = transcripts.map(t => t.text).join(' ');
         document.getElementById('recordBtn').classList.add('recording');
         document.getElementById('status').classList.add('active');
     };
@@ -126,35 +132,40 @@ function setupSpeechRecognition() {
     };
     
     recognition.onresult = (event) => {
-        let interim = '';
-        let finalText = '';
+        let currentInterim = '';
+        let newFinalText = '';
         
         for (let i = event.resultIndex; i < event.results.length; i++) {
             const transcript = event.results[i][0].transcript;
             
             if (event.results[i].isFinal) {
-                finalText += transcript + ' ';
+                newFinalText += transcript + ' ';
             } else {
-                interim += transcript;
+                currentInterim += transcript;
             }
         }
         
-        // Send final text to server immediately
-        if (finalText) {
-            const finalTrimmed = finalText.trim();
+        // If we got final text, send it and reset interim
+        if (newFinalText) {
+            const finalTrimmed = newFinalText.trim();
             if (finalTrimmed) {
                 sendTranscript(finalTrimmed);
+                lastFinalText = transcripts.map(t => t.text).join(' ');
             }
+            accumulatedInterim = '';
+        } else {
+            // No final yet, accumulate interim
+            accumulatedInterim = currentInterim;
         }
         
-        // Build live display: all finalized transcripts + current interim
+        // Build display: all final transcripts + accumulated interim
         const allFinalText = transcripts.map(t => t.text).join(' ');
-        liveText = allFinalText + (interim ? ' ' + interim : '');
+        liveText = allFinalText + (accumulatedInterim ? ' ' + accumulatedInterim : '');
         
-        // Update the status popup
-        document.getElementById('partialText').textContent = interim || allFinalText || 'Listening...';
+        // Update status popup
+        document.getElementById('partialText').textContent = accumulatedInterim || allFinalText || 'Listening...';
         
-        // Always render so interim shows in main panel
+        // Render in main panel
         renderTranscripts();
     };
     
