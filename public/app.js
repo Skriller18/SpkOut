@@ -139,7 +139,7 @@ function setupSpeechRecognition() {
             }
         }
         
-        // Send final text immediately
+        // Send final text to server immediately
         if (finalText) {
             const finalTrimmed = finalText.trim();
             if (finalTrimmed) {
@@ -147,10 +147,14 @@ function setupSpeechRecognition() {
             }
         }
         
-        // Update live text with all spoken text so far
+        // Build live display: all finalized transcripts + current interim
         const allFinalText = transcripts.map(t => t.text).join(' ');
         liveText = allFinalText + (interim ? ' ' + interim : '');
-        document.getElementById('partialText').textContent = liveText || 'Listening...';
+        
+        // Update the status popup
+        document.getElementById('partialText').textContent = interim || allFinalText || 'Listening...';
+        
+        // Always render so interim shows in main panel
         renderTranscripts();
     };
     
@@ -229,8 +233,8 @@ function renderTranscripts() {
         </div>
     `).join('');
     
-    // Add live text at the bottom if exists
-    if (liveText && isRecording) {
+    // Add live text at the bottom if exists (show interim even when paused briefly)
+    if (liveText) {
         html += `
             <div class="transcript-item" style="opacity: 0.7; border-left-color: #ff9500;">
                 <div class="text">${escapeHtml(liveText)}</div>
