@@ -4,6 +4,7 @@ let sessionId = null;
 let recognition = null;
 let isRecording = false;
 let transcripts = [];
+let liveText = '';
 
 // Generate a random session ID
 function generateSessionId() {
@@ -22,7 +23,6 @@ function joinSession() {
     const newSessionId = input.value.trim() || generateSessionId();
     
     if (newSessionId) {
-        // Update URL without reload
         const url = new URL(window.location);
         url.searchParams.set('session', newSessionId);
         window.history.pushState({}, '', url);
@@ -35,17 +35,15 @@ function joinSession() {
 function connectSession(sid) {
     sessionId = sid;
     
-    // Update UI
     document.getElementById('sessionInput').value = sid;
     document.getElementById('shareSection').style.display = 'flex';
     document.getElementById('shareUrl').value = window.location.href;
     document.getElementById('emptyState').style.display = 'none';
     
-    // Clear existing transcripts
     transcripts = [];
+    liveText = '';
     renderTranscripts();
     
-    // Connect WebSocket
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${protocol}//${window.location.host}?session=${sid}`;
     
@@ -66,9 +64,11 @@ function connectSession(sid) {
             renderTranscripts();
         } else if (data.type === 'transcript') {
             transcripts.push(data.data);
+            liveText = '';
             renderTranscripts();
         } else if (data.type === 'clear') {
             transcripts = [];
+            liveText = '';
             renderTranscripts();
         }
     };
@@ -109,8 +109,6 @@ function setupSpeechRecognition() {
     recognition.interimResults = true;
     recognition.lang = 'en-US';
     
-    let finalTranscript = '';
-    
     recognition.onstart = () => {
         isRecording = true;
         document.getElementById('recordBtn').classList.add('recording');
@@ -122,7 +120,6 @@ function setupSpeechRecognition() {
         document.getElementById('recordBtn').classList.remove('recording');
         document.getElementById('status').classList.remove('active');
         
-        // Auto-restart if still recording mode
         if (isRecording) {
             recognition.start();
         }
@@ -130,25 +127,36 @@ function setupSpeechRecognition() {
     
     recognition.onresult = (event) => {
         let interim = '';
+        let finalText = '';
         
         for (let i = event.resultIndex; i < event.results.length; i++) {
             const transcript = event.results[i][0].transcript;
             
             if (event.results[i].isFinal) {
-                finalTranscript += transcript + ' ';
-                sendTranscript(transcript.trim());
+                finalText += transcript + ' ';
             } else {
                 interim += transcript;
             }
         }
         
-        document.getElementById('partialText').textContent = interim;
+        // Send final text immediately
+        if (finalText) {
+            const finalTrimmed = finalText.trim();
+            if (finalTrimmed) {
+                sendTranscript(finalTrimmed);
+            }
+        }
+        
+        // Update live text with all spoken text so far
+        const allFinalText = transcripts.map(t => t.text).join(' ');
+        liveText = allFinalText + (interim ? ' ' + interim : '');
+        document.getElementById('partialText').textContent = liveText || 'Listening...';
+        renderTranscripts();
     };
     
     recognition.onerror = (event) => {
         console.error('Speech recognition error:', event.error);
         if (event.error === 'no-speech') {
-            // Auto restart on no speech
             recognition.stop();
             setTimeout(() => {
                 if (isRecording) recognition.start();
@@ -173,7 +181,9 @@ function toggleRecording() {
     
     if (isRecording) {
         isRecording = false;
+        liveText = '';
         recognition.stop();
+        renderTranscripts();
     } else {
         isRecording = true;
         recognition.start();
@@ -200,7 +210,7 @@ function sendTranscript(text) {
 function renderTranscripts() {
     const container = document.getElementById('transcripts');
     
-    if (transcripts.length === 0) {
+    if (transcripts.length === 0 && !liveText) {
         container.innerHTML = `
             <div class="empty-state">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -212,14 +222,24 @@ function renderTranscripts() {
         return;
     }
     
-    container.innerHTML = transcripts.map(t => `
+    let html = transcripts.map(t => `
         <div class="transcript-item">
             <div class="text">${escapeHtml(t.text)}</div>
             <div class="time">${formatTime(t.timestamp)}</div>
         </div>
     `).join('');
     
-    // Scroll to bottom
+    // Add live text at the bottom if exists
+    if (liveText && isRecording) {
+        html += `
+            <div class="transcript-item" style="opacity: 0.7; border-left-color: #ff9500;">
+                <div class="text">${escapeHtml(liveText)}</div>
+                <div class="time" style="color: #ff9500;">🎙️ Speaking...</div>
+            </div>
+        `;
+    }
+    
+    container.innerHTML = html;
     container.scrollTop = container.scrollHeight;
 }
 
@@ -238,12 +258,12 @@ function formatTime(iso) {
 
 // Copy all text to clipboard
 function copyAllText() {
-    if (transcripts.length === 0) {
+    if (transcripts.length === 0 && !liveText) {
         alert('No text to copy yet!');
         return;
     }
     
-    const fullText = transcripts.map(t => t.text).join('\n\n');
+    const fullText = transcripts.map(t => t.text).join('\n\n') + (liveText ? '\n\n[Speaking...] ' + liveText : '');
     navigator.clipboard.writeText(fullText).then(() => {
         showToast('📋 Copied all text!');
     });
@@ -251,7 +271,7 @@ function copyAllText() {
 
 // Download all text as file
 function downloadText() {
-    if (transcripts.length === 0) {
+    if (transcripts.length === 0 && !liveText) {
         alert('No text to download yet!');
         return;
     }
@@ -259,7 +279,7 @@ function downloadText() {
     const fullText = transcripts.map(t => {
         const time = new Date(t.timestamp).toLocaleString();
         return `[${time}]\n${t.text}`;
-    }).join('\n\n---\n\n');
+    }).join('\n\n---\n\n') + (liveText ? `\n\n---\n\n[Speaking...]\n${liveText}` : '');
     
     const blob = new Blob([fullText], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
@@ -276,14 +296,14 @@ function downloadText() {
 
 // Clear all transcripts
 function clearTranscripts() {
-    if (transcripts.length === 0) return;
+    if (transcripts.length === 0 && !liveText) return;
     
     if (!confirm('Clear all text? This cannot be undone.')) return;
     
     transcripts = [];
+    liveText = '';
     renderTranscripts();
     
-    // Also clear on server
     if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'clear' }));
     }
