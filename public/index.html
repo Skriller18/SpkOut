@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SpkOut - Speech to Text</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0a0a0a;
+            color: #fff;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .header {
+            padding: 20px;
+            text-align: center;
+            border-bottom: 1px solid #222;
+        }
+        
+        .header h1 {
+            font-size: 24px;
+            font-weight: 600;
+            color: #00e5ff;
+        }
+        
+        .header p {
+            font-size: 14px;
+            color: #888;
+            margin-top: 5px;
+        }
+        
+        .session-bar {
+            display: flex;
+            gap: 10px;
+            padding: 15px 20px;
+            background: #111;
+            border-bottom: 1px solid #222;
+        }
+        
+        .session-bar input {
+            flex: 1;
+            padding: 12px 16px;
+            border: 1px solid #333;
+            border-radius: 10px;
+            background: #1a1a1a;
+            color: #fff;
+            font-size: 16px;
+        }
+        
+        .session-bar button {
+            padding: 12px 20px;
+            border: none;
+            border-radius: 10px;
+            background: #00e5ff;
+            color: #000;
+            font-weight: 600;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+        
+        .session-bar button:active {
+            transform: scale(0.95);
+        }
+        
+        .share-link {
+            padding: 10px 20px;
+            background: #111;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 13px;
+        }
+        
+        .share-link input {
+            flex: 1;
+            padding: 8px 12px;
+            border: 1px solid #333;
+            border-radius: 6px;
+            background: #1a1a1a;
+            color: #00e5ff;
+            font-size: 13px;
+        }
+        
+        .share-link button {
+            padding: 8px 14px;
+            border: 1px solid #333;
+            border-radius: 6px;
+            background: #222;
+            color: #fff;
+            cursor: pointer;
+        }
+        
+        .main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            padding: 20px;
+            padding-bottom: 160px;
+            overflow-y: auto;
+        }
+        
+        .transcripts {
+            flex: 1;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        
+        .transcript-item {
+            background: #1a1a1a;
+            border-radius: 12px;
+            padding: 16px;
+            border-left: 3px solid #00e5ff;
+        }
+        
+        .transcript-item .text {
+            font-size: 16px;
+            line-height: 1.6;
+            color: #fff;
+        }
+        
+        .transcript-item .time {
+            font-size: 12px;
+            color: #666;
+            margin-top: 8px;
+        }
+        
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #555;
+        }
+        
+        .empty-state svg {
+            width: 64px;
+            height: 64px;
+            margin-bottom: 20px;
+            opacity: 0.3;
+        }
+        
+        .toolbar {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            padding: 15px 20px;
+            background: linear-gradient(transparent, #0a0a0a 50%);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 12px;
+            padding-bottom: calc(15px + env(safe-area-inset-bottom));
+            z-index: 50;
+        }
+        
+        .toolbar-btn {
+            padding: 10px 16px;
+            border: 1px solid #333;
+            border-radius: 10px;
+            background: #1a1a1a;
+            color: #fff;
+            font-size: 14px;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+        
+        .toolbar-btn:active {
+            transform: scale(0.95);
+        }
+        
+        .record-bar {
+            position: fixed;
+            bottom: 70px;
+            left: 0;
+            right: 0;
+            padding: 15px;
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            z-index: 50;
+        }
+        
+        .record-btn {
+            width: 72px;
+            height: 72px;
+            border-radius: 50%;
+            border: none;
+            background: #ff3b30;
+            color: #fff;
+            font-size: 28px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 4px 20px rgba(255, 59, 48, 0.4);
+            transition: transform 0.2s;
+        }
+        
+        .record-btn:active {
+            transform: scale(0.9);
+        }
+        
+        .record-btn.recording {
+            background: #ff9500;
+            animation: pulse 1.5s infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+        }
+        
+        .status {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0,0,0,0.9);
+            padding: 20px 30px;
+            border-radius: 16px;
+            font-size: 18px;
+            display: none;
+            z-index: 100;
+            text-align: center;
+        }
+        
+        .status.active {
+            display: block;
+        }
+        
+        .status .listening {
+            color: #00e5ff;
+            margin-bottom: 10px;
+        }
+        
+        .status .partial {
+            color: #888;
+            font-size: 14px;
+        }
+
+        @media (min-width: 768px) {
+            .transcript-item .text {
+                font-size: 18px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🎙️ SpkOut</h1>
+        <p>Speak on your phone, see it everywhere</p>
+    </div>
+    
+    <div class="session-bar">
+        <input type="text" id="sessionInput" placeholder="Enter session ID or leave empty for new" maxlength="50">
+        <button onclick="joinSession()">Join / Create</button>
+    </div>
+    
+    <div class="share-link" id="shareSection" style="display:none;">
+        <span>🔗 Share:</span>
+        <input type="text" id="shareUrl" readonly>
+        <button onclick="copyLink()">Copy</button>
+    </div>
+    
+    <div class="main">
+        <div class="transcripts" id="transcripts">
+            <div class="empty-state" id="emptyState">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <path d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z"/>
+                </svg>
+                <p>Join a session and tap the mic to start</p>
+            </div>
+        </div>
+    </div>
+    
+    <div class="record-bar">
+        <button class="record-btn" id="recordBtn" onclick="toggleRecording()">🎤</button>
+    </div>
+    
+    <div class="toolbar">
+        <button class="toolbar-btn" onclick="copyAllText()">📋 Copy All</button>
+        <button class="toolbar-btn" onclick="downloadText()">⬇️ Download</button>
+        <button class="toolbar-btn" onclick="clearTranscripts()">🗑️ Clear</button>
+    </div>
+    
+    <div class="status" id="status">
+        <div class="listening">🔴 Listening...</div>
+        <div class="partial" id="partialText"></div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
