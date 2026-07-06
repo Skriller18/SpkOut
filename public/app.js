@@ -204,9 +204,35 @@ async function requestMicPermission() {
     }
 }
 
-// Keep track of recognition state for iOS workaround
+// Keep track of recognition state for mobile workaround
 let recognitionRestartAttempts = 0;
-const MAX_RESTART_ATTEMPTS = 3;
+let recognitionRestartInterval = null;
+const MAX_RESTART_ATTEMPTS = 5;
+
+// Start a background polling to restart recognition on mobile
+function startRecognitionPolling() {
+    if (recognitionRestartInterval) clearInterval(recognitionRestartInterval);
+    
+    recognitionRestartInterval = setInterval(() => {
+        if (isRecording && recognition && !document.getElementById('recordBtn').classList.contains('recording')) {
+            // Recognition stopped but we want it running - try to restart
+            console.log('Polling: recognition stopped unexpectedly, attempting restart');
+            try {
+                recognition.start();
+            } catch (e) {
+                // If start fails, it's likely still running or no permission
+                console.log('Polling restart failed:', e.message);
+            }
+        }
+    }, 500); // Check every 500ms
+}
+
+function stopRecognitionPolling() {
+    if (recognitionRestartInterval) {
+        clearInterval(recognitionRestartInterval);
+        recognitionRestartInterval = null;
+    }
+}
 
 // Toggle recording
 function toggleRecording() {
@@ -224,6 +250,7 @@ function toggleRecording() {
         // Stop recording
         isRecording = false;
         recognitionRestartAttempts = 0;
+        stopRecognitionPolling();
         liveText = '';
         try { 
             recognition.stop(); 
@@ -234,17 +261,22 @@ function toggleRecording() {
         document.getElementById('status').classList.remove('active');
         renderTranscripts();
     } else {
-        // Start recording - on iOS Safari, this MUST be called synchronously from a user gesture
+        // Start recording - MUST be called synchronously from a user gesture
         isRecording = true;
         recognitionRestartAttempts = 0;
         try {
             recognition.start();
+            startRecognitionPolling(); // Start polling to handle mobile auto-stop
         } catch (e) {
             console.error('recognition.start() failed:', e);
             isRecording = false;
+            stopRecognitionPolling();
             
-            // iOS Safari specific: may need to request permission first
-            if (e.message && e.message.includes('permission')) {
+            if (e.message && e.message.includes('already started')) {
+                // Already running, just make sure UI is correct
+                document.getElementById('recordBtn').classList.add('recording');
+                document.getElementById('status').classList.add('active');
+            } else if (e.message && e.message.includes('permission')) {
                 alert('Microphone permission required. Please allow access and try again.');
             } else {
                 alert('Could not start speech recognition. Error: ' + e.message);
