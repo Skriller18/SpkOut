@@ -1,5 +1,5 @@
-// SpkOut - Simple Voice to Text Chat
-// Record voice note → transcribe → show like chat
+// SpkOut - Simple Voice to Text Chat using Groq Cloud Whisper
+// Record voice note → send to server → get transcript → show like chat
 
 let ws = null;
 let sessionId = null;
@@ -7,7 +7,6 @@ let mediaRecorder = null;
 let audioChunks = [];
 let isRecording = false;
 let transcripts = [];
-let recognition = null;
 
 // Generate a random session ID
 function generateSessionId() {
@@ -132,20 +131,28 @@ async function startRecording() {
             if (audioBlob.size > 1000) {
                 // Add audio to chat
                 addAudioToChat(audioBlob);
+                
+                // Show transcribing indicator
+                showTranscribingIndicator();
+                
+                // Transcribe using Groq Cloud
+                const transcript = await transcribeWithGroq(audioBlob);
+                
+                // Remove transcribing indicator
+                removeTranscribingIndicator();
+                
+                if (transcript) {
+                    sendTranscript(transcript);
+                    showToast('Transcription complete!');
+                } else {
+                    showToast('Transcription failed');
+                }
             }
             
             updateUIState(false);
         };
         
-        // Start recording
         mediaRecorder.start();
-        
-        // Start speech recognition simultaneously
-        const speechStarted = startSpeechRecognition();
-        if (!speechStarted) {
-            showToast('Recording audio only (speech recognition not available)');
-        }
-        
         isRecording = true;
         updateUIState(true);
         
@@ -155,130 +162,11 @@ async function startRecording() {
     }
 }
 
-// Start speech recognition
-function startSpeechRecognition() {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    
-    if (!SpeechRecognition) {
-        console.warn('Speech Recognition API not supported in this browser');
-        showToast('Speech recognition not supported');
-        return false; // Indicate failure
-    }
-    
-    console.log('Starting speech recognition...');
-    
-    recognition = new SpeechRecognition();
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognition.lang = 'en-US';
-    
-    let finalTranscript = '';
-    let hasReceivedResult = false;
-    
-    recognition.onstart = () => {
-        console.log('Speech recognition started');
-    };
-    
-    recognition.onresult = (event) => {
-        hasReceivedResult = true;
-        let interimTranscript = '';
-        
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-            const transcript = event.results[i][0].transcript;
-            if (event.results[i].isFinal) {
-                finalTranscript += transcript + ' ';
-                console.log('Final transcript part:', transcript);
-            } else {
-                interimTranscript += transcript;
-            }
-        }
-        
-        console.log('Interim:', interimTranscript);
-        console.log('Final so far:', finalTranscript);
-        
-        // Show interim text
-        if (interimTranscript || finalTranscript) {
-            showInterimText(finalTranscript + interimTranscript);
-        }
-    };
-    
-    recognition.onend = () => {
-        console.log('Speech recognition ended. Final transcript:', finalTranscript);
-        
-        // When recording stops, send the final transcript
-        if (finalTranscript.trim()) {
-            sendTranscript(finalTranscript.trim());
-        } else if (!hasReceivedResult) {
-            console.log('No speech detected during recording');
-            showToast('No speech detected');
-        }
-        
-        clearInterimText();
-    };
-    
-    recognition.onerror = (event) => {
-        console.error('Speech recognition error:', event.error);
-        if (event.error === 'not-allowed') {
-            showToast('Microphone permission denied');
-        } else if (event.error === 'no-speech') {
-            console.log('No speech detected error');
-        } else {
-            showToast('Speech error: ' + event.error);
-        }
-    };
-    
-    try {
-        recognition.start();
-        console.log('Speech recognition.start() called successfully');
-        return true; // Success
-    } catch (e) {
-        console.error('Failed to start recognition:', e);
-        showToast('Failed to start speech recognition');
-        return false; // Failure
-    }
-}
-
-// Show interim text
-function showInterimText(text) {
-    let interimEl = document.getElementById('interimText');
-    if (!interimEl) {
-        interimEl = document.createElement('div');
-        interimEl.id = 'interimText';
-        interimEl.className = 'chat-item text-item interim';
-        interimEl.innerHTML = `
-            <div class="chat-bubble text-bubble" style="opacity: 0.7; border-left-color: #ff9500;">
-                ${escapeHtml(text)}
-            </div>
-            <div class="chat-time" style="color: #ff9500;">Transcribing...</div>
-        `;
-        document.getElementById('transcripts').appendChild(interimEl);
-    } else {
-        interimEl.querySelector('.text-bubble').textContent = text;
-    }
-    
-    // Scroll to bottom
-    const container = document.getElementById('transcripts');
-    container.scrollTop = container.scrollHeight;
-}
-
-// Clear interim text
-function clearInterimText() {
-    const interimEl = document.getElementById('interimText');
-    if (interimEl) {
-        interimEl.remove();
-    }
-}
-
 // Stop recording
 function stopRecording() {
     if (mediaRecorder && mediaRecorder.state !== 'inactive') {
         mediaRecorder.stop();
     }
-    
-    if (recognition) {
-        recognition.stop();
-    }
-    
     isRecording = false;
 }
 
@@ -288,6 +176,51 @@ function toggleRecording() {
         stopRecording();
     } else {
         startRecording();
+    }
+}
+
+// Transcribe audio using Groq Cloud Whisper API
+async function transcribeWithGroq(audioBlob) {
+    try {
+        const reader = new FileReader();
+        reader.readAsDataURL(audioBlob);
+        
+        return new Promise((resolve) => {
+            reader.onloadend = async () => {
+                try {
+                    const base64data = reader.result.split(',')[1];
+                    
+                    const response = await fetch('/api/transcribe', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            audioData: base64data,
+                            sessionId: sessionId
+                        })
+                    });
+                    
+                    if (response.ok) {
+                        const result = await response.json();
+                        console.log('Groq transcription result:', result);
+                        resolve(result.transcript || null);
+                    } else {
+                        console.error('Transcription API error:', response.status);
+                        resolve(null);
+                    }
+                } catch (error) {
+                    console.error('Transcription fetch error:', error);
+                    resolve(null);
+                }
+            };
+            
+            reader.onerror = () => {
+                console.error('FileReader error');
+                resolve(null);
+            };
+        });
+    } catch (e) {
+        console.error('Transcription error:', e);
+        return null;
     }
 }
 
@@ -304,16 +237,32 @@ function addAudioToChat(audioBlob) {
     renderTranscripts();
 }
 
+// Show transcribing indicator
+function showTranscribingIndicator() {
+    const container = document.getElementById('transcripts');
+    const indicator = document.createElement('div');
+    indicator.id = 'transcribing-indicator';
+    indicator.className = 'chat-item text-item';
+    indicator.innerHTML = `
+        <div class="chat-bubble text-bubble" style="opacity: 0.7; border-left-color: #ff9500;">
+            🎙️ Transcribing...
+        </div>
+    `;
+    container.appendChild(indicator);
+    container.scrollTop = container.scrollHeight;
+}
+
+// Remove transcribing indicator
+function removeTranscribingIndicator() {
+    const indicator = document.getElementById('transcribing-indicator');
+    if (indicator) {
+        indicator.remove();
+    }
+}
+
 // Send transcript to server
 function sendTranscript(text) {
-    if (!text) {
-        console.log('No transcript text to send');
-        // Even if no transcript, show the audio was recorded
-        showToast('Audio recorded (no transcript)');
-        return;
-    }
-    
-    console.log('Sending transcript:', text);
+    if (!text) return;
     
     const entry = {
         type: 'transcript',
@@ -329,8 +278,6 @@ function sendTranscript(text) {
     if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify(entry));
     }
-    
-    showToast('Transcript added!');
 }
 
 // Update UI state
