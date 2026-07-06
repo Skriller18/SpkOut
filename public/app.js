@@ -7,6 +7,7 @@ let mediaRecorder = null;
 let audioChunks = [];
 let isRecording = false;
 let transcripts = [];
+let recognition = null;
 
 // Generate a random session ID
 function generateSessionId() {
@@ -94,6 +95,11 @@ function copyLink() {
 
 // Start recording voice note
 async function startRecording() {
+    if (!sessionId) {
+        alert('Please join or create a session first!');
+        return;
+    }
+    
     try {
         const stream = await navigator.mediaDevices.getUserMedia({ 
             audio: {
@@ -124,20 +130,19 @@ async function startRecording() {
             stream.getTracks().forEach(track => track.stop());
             
             if (audioBlob.size > 1000) {
-                // Show audio in chat
+                // Add audio to chat
                 addAudioToChat(audioBlob);
-                
-                // Transcribe
-                const transcript = await transcribeAudio(audioBlob);
-                if (transcript) {
-                    sendTranscript(transcript);
-                }
             }
             
             updateUIState(false);
         };
         
+        // Start recording
         mediaRecorder.start();
+        
+        // Start speech recognition simultaneously
+        startSpeechRecognition();
+        
         isRecording = true;
         updateUIState(true);
         
@@ -147,21 +152,105 @@ async function startRecording() {
     }
 }
 
+// Start speech recognition
+function startSpeechRecognition() {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    
+    if (!SpeechRecognition) {
+        console.warn('Speech Recognition not supported');
+        return;
+    }
+    
+    recognition = new SpeechRecognition();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = 'en-US';
+    
+    let finalTranscript = '';
+    
+    recognition.onresult = (event) => {
+        let interimTranscript = '';
+        
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+            const transcript = event.results[i][0].transcript;
+            if (event.results[i].isFinal) {
+                finalTranscript += transcript + ' ';
+            } else {
+                interimTranscript += transcript;
+            }
+        }
+        
+        // Show interim text
+        if (interimTranscript) {
+            showInterimText(finalTranscript + interimTranscript);
+        }
+    };
+    
+    recognition.onend = () => {
+        // When recording stops, send the final transcript
+        if (finalTranscript.trim()) {
+            sendTranscript(finalTranscript.trim());
+        }
+        clearInterimText();
+    };
+    
+    recognition.onerror = (event) => {
+        console.error('Speech recognition error:', event.error);
+    };
+    
+    try {
+        recognition.start();
+    } catch (e) {
+        console.error('Failed to start recognition:', e);
+    }
+}
+
+// Show interim text
+function showInterimText(text) {
+    let interimEl = document.getElementById('interimText');
+    if (!interimEl) {
+        interimEl = document.createElement('div');
+        interimEl.id = 'interimText';
+        interimEl.className = 'chat-item text-item interim';
+        interimEl.innerHTML = `
+            <div class="chat-bubble text-bubble" style="opacity: 0.7;">
+                ${escapeHtml(text)}
+            </div>
+            <div class="chat-time">Transcribing...</div>
+        `;
+        document.getElementById('transcripts').appendChild(interimEl);
+    } else {
+        interimEl.querySelector('.text-bubble').textContent = text;
+    }
+    
+    // Scroll to bottom
+    const container = document.getElementById('transcripts');
+    container.scrollTop = container.scrollHeight;
+}
+
+// Clear interim text
+function clearInterimText() {
+    const interimEl = document.getElementById('interimText');
+    if (interimEl) {
+        interimEl.remove();
+    }
+}
+
 // Stop recording
 function stopRecording() {
     if (mediaRecorder && mediaRecorder.state !== 'inactive') {
         mediaRecorder.stop();
     }
+    
+    if (recognition) {
+        recognition.stop();
+    }
+    
     isRecording = false;
 }
 
 // Toggle recording
 function toggleRecording() {
-    if (!sessionId) {
-        alert('Please join or create a session first!');
-        return;
-    }
-    
     if (isRecording) {
         stopRecording();
     } else {
@@ -180,70 +269,6 @@ function addAudioToChat(audioBlob) {
     };
     transcripts.push(entry);
     renderTranscripts();
-}
-
-// Transcribe audio using browser's built-in Speech Recognition API
-async function transcribeAudio(audioBlob) {
-    return new Promise((resolve) => {
-        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-        
-        if (!SpeechRecognition) {
-            console.warn('Speech Recognition not supported');
-            resolve(null);
-            return;
-        }
-        
-        // Create audio element to play back
-        const audioUrl = URL.createObjectURL(audioBlob);
-        const audio = new Audio(audioUrl);
-        
-        // Create recognition instance
-        const recognition = new SpeechRecognition();
-        recognition.continuous = true;
-        recognition.interimResults = false;
-        recognition.lang = 'en-US';
-        
-        let finalTranscript = '';
-        
-        recognition.onresult = (event) => {
-            for (let i = event.resultIndex; i < event.results.length; i++) {
-                if (event.results[i].isFinal) {
-                    finalTranscript += event.results[i][0].transcript + ' ';
-                }
-            }
-        };
-        
-        recognition.onend = () => {
-            resolve(finalTranscript.trim() || null);
-        };
-        
-        recognition.onerror = (event) => {
-            console.error('Speech recognition error:', event.error);
-            resolve(null);
-        };
-        
-        // Start recognition and play audio
-        try {
-            recognition.start();
-            audio.play().catch(e => console.log('Audio play error:', e));
-            
-            // Stop recognition when audio ends
-            audio.onended = () => {
-                setTimeout(() => {
-                    recognition.stop();
-                }, 500);
-            };
-            
-            // Fallback: stop after 30 seconds
-            setTimeout(() => {
-                recognition.stop();
-            }, 30000);
-            
-        } catch (e) {
-            console.error('Failed to start recognition:', e);
-            resolve(null);
-        }
-    });
 }
 
 // Send transcript to server
