@@ -1,10 +1,13 @@
-// SpkOut - Speech to Text App
+// SpkOut - Speech to Text App using MediaRecorder + Server-side Whisper
 let ws = null;
 let sessionId = null;
-let recognition = null;
+let mediaRecorder = null;
+let stream = null;
 let isRecording = false;
 let transcripts = [];
 let liveText = '';
+let audioChunks = [];
+let recordingInterval = null;
 
 // Generate a random session ID
 function generateSessionId() {
@@ -45,7 +48,7 @@ function connectSession(sid) {
     renderTranscripts();
     
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}?session=${sid}`;
+    const wsUrl = `${protocol}//${window.location.host}?session=***}`;
     
     if (ws) ws.close();
     
@@ -95,196 +98,159 @@ function copyLink() {
     });
 }
 
-// Setup speech recognition
-function setupSpeechRecognition() {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    
-    if (!SpeechRecognition) {
-        alert('Speech recognition not supported. Try Chrome on Android or Safari on iOS.');
-        return null;
-    }
-    
-    recognition = new SpeechRecognition();
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognition.lang = 'en-US';
-    
-    recognition.onstart = () => {
-        isRecording = true;
-        document.getElementById('recordBtn').classList.add('recording');
-        document.getElementById('status').classList.add('active');
-    };
-    
-    recognition.onend = () => {
-        document.getElementById('recordBtn').classList.remove('recording');
-        document.getElementById('status').classList.remove('active');
-        
-        // Mobile browsers stop after each utterance. 
-        // We need to restart if user is still in "recording" mode.
-        // On Android Chrome, we can restart immediately from onend context.
-        // On iOS Safari, we need user to tap again (setTimeout breaks gesture chain).
-        if (isRecording) {
-            console.log('Recognition ended while isRecording=true, attempting restart...');
-            
-            // Try immediate restart first (works on Android Chrome)
-            try {
-                recognition.start();
-                console.log('Immediate restart successful');
-            } catch (e) {
-                console.log('Immediate restart failed:', e.message);
-                
-                // If immediate fails, try with minimal delay
-                // This may work on some Android devices but not iOS
-                setTimeout(() => {
-                    if (isRecording) {
-                        try {
-                            recognition.start();
-                            console.log('Delayed restart successful');
-                        } catch (e2) {
-                            console.log('Delayed restart also failed:', e2.message);
-                            // Give up - show toast to user
-                            isRecording = false;
-                            showToast('🎙️ Tap mic to continue recording');
-                        }
-                    }
-                }, 100);
-            }
-        }
-    };
-    
-    recognition.onresult = (event) => {
-        let currentInterim = '';
-        let finalText = '';
-        
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-            const transcript = event.results[i][0].transcript;
-            
-            if (event.results[i].isFinal) {
-                finalText += transcript + ' ';
-            } else {
-                currentInterim += transcript;
-            }
-        }
-        
-        // Send final transcript immediately
-        if (finalText) {
-            const finalTrimmed = finalText.trim();
-            if (finalTrimmed) {
-                console.log('Sending final transcript:', finalTrimmed);
-                sendTranscript(finalTrimmed);
-            }
-        } else if (currentInterim) {
-            // Even if no final text, update live text for display
-            console.log('Interim text:', currentInterim);
-        }
-        
-        // Update live text display (final transcripts + current interim)
-        const allFinalText = transcripts.map(t => t.text).join(' ');
-        liveText = allFinalText + (currentInterim ? ' ' + currentInterim : '');
-        
-        // Update status popup
-        const partialEl = document.getElementById('partialText');
-        if (partialEl) {
-            partialEl.textContent = currentInterim || allFinalText || 'Listening...';
-        }
-        
-        // Render in main panel
-        renderTranscripts();
-    };
-    
-    recognition.onerror = (event) => {
-        console.error('Speech recognition error:', event.error);
-        if (event.error === 'not-allowed') {
-            alert('Microphone permission denied. Please allow microphone access in your browser settings.');
-            isRecording = false;
-        } else if (event.error === 'no-speech') {
-            // On mobile, no-speech often means user paused. The recognition will end naturally.
-            // We let onend handle the cleanup.
-            console.log('No speech detected');
-        } else if (event.error === 'network') {
-            console.error('Network error during speech recognition');
-        } else if (event.error === 'aborted') {
-            console.log('Speech recognition aborted (likely manual stop)');
-        } else {
-            console.error('Unknown speech recognition error:', event.error);
-        }
-    };
-    
-    return recognition;
-}
-
-// Request microphone permission explicitly (needed for some mobile browsers)
-async function requestMicPermission() {
+// Send audio chunk to server for transcription
+async function transcribeAudioChunk(audioBlob) {
     try {
-        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            // Stop all tracks immediately — we just needed the permission prompt
-            stream.getTracks().forEach(t => t.stop());
-        }
+        const reader = new FileReader();
+        reader.readAsDataURL(audioBlob);
+        
+        reader.onloadend = async () => {
+            const base64data = reader.result.split(',')[1];
+            
+            const response = await fetch('/api/transcribe', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    audioData: base64data,
+                    sessionId: sessionId,
+                    mimeType: audioBlob.type
+                })
+            });
+            
+            if (response.ok) {
+                const result = await response.json();
+                if (result.transcript && result.transcript.trim()) {
+                    sendTranscript(result.transcript.trim());
+                }
+            }
+        };
     } catch (e) {
-        console.warn('getUserMedia permission request failed or not supported:', e);
+        console.error('Transcription error:', e);
     }
 }
 
-// Keep track of recognition state for mobile workaround
-let recognitionRestartAttempts = 0;
-const MAX_RESTART_ATTEMPTS = 3;
-
-// Toggle recording
-function toggleRecording() {
+// Start recording
+async function startRecording() {
     if (!sessionId) {
         alert('Please join or create a session first!');
         return;
     }
-
-    if (!recognition) {
-        recognition = setupSpeechRecognition();
-        if (!recognition) return;
-    }
-
-    if (isRecording) {
-        // Stop recording
-        isRecording = false;
-        recognitionRestartAttempts = 0;
-        liveText = '';
-        try { 
-            recognition.stop(); 
-        } catch (e) { 
-            console.log('Stop error:', e);
-        }
-        document.getElementById('recordBtn').classList.remove('recording');
-        document.getElementById('status').classList.remove('active');
-        renderTranscripts();
-    } else {
-        // Start recording - MUST be called synchronously from a user gesture
-        isRecording = true;
-        recognitionRestartAttempts = 0;
-        try {
-            recognition.start();
-        } catch (e) {
-            console.error('recognition.start() failed:', e);
-            isRecording = false;
-            
-            if (e.message && e.message.includes('already started')) {
-                // Already running, just make sure UI is correct
-                document.getElementById('recordBtn').classList.add('recording');
-                document.getElementById('status').classList.add('active');
-            } else if (e.message && e.message.includes('permission')) {
-                alert('Microphone permission required. Please allow access and try again.');
-            } else {
-                alert('Could not start speech recognition. Error: ' + e.message);
+    
+    try {
+        // Get microphone access
+        stream = await navigator.mediaDevices.getUserMedia({ 
+            audio: {
+                echoCancellation: true,
+                noiseSuppression: true,
+                sampleRate: 44100
             }
-        }
+        });
+        
+        // Determine supported MIME type
+        const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') 
+            ? 'audio/webm;codecs=opus' 
+            : 'audio/webm';
+        
+        mediaRecorder = new MediaRecorder(stream, { mimeType });
+        
+        audioChunks = [];
+        
+        mediaRecorder.ondataavailable = (event) => {
+            if (event.data.size > 0) {
+                audioChunks.push(event.data);
+            }
+        };
+        
+        mediaRecorder.onstop = async () => {
+            const audioBlob = new Blob(audioChunks, { type: mimeType });
+            audioChunks = [];
+            
+            if (audioBlob.size > 1000) { // Only send if we have meaningful audio
+                await transcribeAudioChunk(audioBlob);
+            }
+            
+            // Restart recording if still in recording mode (continuous)
+            if (isRecording) {
+                try {
+                    mediaRecorder.start(3000); // Capture every 3 seconds
+                } catch (e) {
+                    console.log('Restart failed:', e);
+                    isRecording = false;
+                    updateUIState();
+                }
+            }
+        };
+        
+        mediaRecorder.onerror = (e) => {
+            console.error('MediaRecorder error:', e);
+            isRecording = false;
+            updateUIState();
+        };
+        
+        // Start recording - collect data every 3 seconds
+        mediaRecorder.start(3000);
+        isRecording = true;
+        updateUIState();
+        
+        console.log('Recording started');
+        
+    } catch (err) {
+        console.error('Failed to start recording:', err);
+        alert('Microphone access denied or not available. Please allow microphone permission.');
+        isRecording = false;
+        updateUIState();
+    }
+}
+
+// Stop recording
+function stopRecording() {
+    isRecording = false;
+    
+    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        mediaRecorder.stop();
+    }
+    
+    if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+        stream = null;
+    }
+    
+    updateUIState();
+    console.log('Recording stopped');
+}
+
+// Update UI state
+function updateUIState() {
+    const recordBtn = document.getElementById('recordBtn');
+    const status = document.getElementById('status');
+    
+    if (isRecording) {
+        recordBtn.classList.add('recording');
+        status.classList.add('active');
+        recordBtn.textContent = '⏹️';
+    } else {
+        recordBtn.classList.remove('recording');
+        status.classList.remove('active');
+        recordBtn.textContent = '🎤';
+    }
+}
+
+// Toggle recording
+function toggleRecording() {
+    if (isRecording) {
+        stopRecording();
+    } else {
+        startRecording();
     }
 }
 
 // Send transcript via WebSocket
 function sendTranscript(text) {
-    console.log('sendTranscript called with:', text, 'WebSocket state:', ws ? ws.readyState : 'no ws');
+    console.log('sendTranscript called with:', text);
     
     if (!ws || ws.readyState !== WebSocket.OPEN) {
-        console.error('WebSocket not connected, transcript not sent:', text);
-        // Store locally anyway so user sees it
+        console.error('WebSocket not connected');
+        // Store locally anyway
         const localEntry = {
             text: text,
             timestamp: new Date().toISOString(),
@@ -302,7 +268,6 @@ function sendTranscript(text) {
         timestamp: new Date().toISOString()
     };
     
-    console.log('Sending via WebSocket:', entry);
     ws.send(JSON.stringify(entry));
 }
 
@@ -322,7 +287,6 @@ function renderTranscripts() {
         return;
     }
     
-    // Build transcript HTML - ensure all transcripts are shown including the most recent
     let html = transcripts.map((t, index) => `
         <div class="transcript-item" data-index="${index}">
             <div class="text">${escapeHtml(t.text)}</div>
@@ -330,19 +294,17 @@ function renderTranscripts() {
         </div>
     `).join('');
     
-    // Add live text at the bottom if exists
     if (liveText) {
         html += `
             <div class="transcript-item live">
                 <div class="text">${escapeHtml(liveText)}</div>
-                <div class="time">🎙️ Speaking...</div>
+                <div class="time">🎙️ Processing...</div>
             </div>
         `;
     }
     
     container.innerHTML = html;
     
-    // Smooth scroll to bottom
     requestAnimationFrame(() => {
         container.scrollTop = container.scrollHeight;
     });
@@ -368,7 +330,7 @@ function copyAllText() {
         return;
     }
     
-    const fullText = transcripts.map(t => t.text).join('\n\n') + (liveText ? '\n\n[Speaking...] ' + liveText : '');
+    const fullText = transcripts.map(t => t.text).join('\n\n');
     navigator.clipboard.writeText(fullText).then(() => {
         showToast('📋 Copied all text!');
     });
@@ -384,7 +346,7 @@ function downloadText() {
     const fullText = transcripts.map(t => {
         const time = new Date(t.timestamp).toLocaleString();
         return `[${time}]\n${t.text}`;
-    }).join('\n\n---\n\n') + (liveText ? `\n\n---\n\n[Speaking...]\n${liveText}` : '');
+    }).join('\n\n---\n\n');
     
     const blob = new Blob([fullText], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
@@ -424,19 +386,6 @@ function showToast(message) {
     const toast = document.createElement('div');
     toast.className = 'toast';
     toast.textContent = message;
-    toast.style.cssText = `
-        position: fixed;
-        bottom: 130px;
-        left: 50%;
-        transform: translateX(-50%);
-        background: #1a1a1a;
-        color: #fff;
-        padding: 12px 24px;
-        border-radius: 24px;
-        font-size: 14px;
-        z-index: 200;
-        animation: fadeIn 0.3s ease;
-    `;
     document.body.appendChild(toast);
     
     setTimeout(() => {
