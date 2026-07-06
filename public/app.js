@@ -98,34 +98,29 @@ function copyLink() {
     });
 }
 
-// Send audio chunk to server for transcription
+// Send audio chunk to server for transcription using Puter.js (free, no API key)
 async function transcribeAudioChunk(audioBlob) {
     try {
-        const reader = new FileReader();
-        reader.readAsDataURL(audioBlob);
+        // Check if Puter.js is loaded
+        if (typeof puter === 'undefined' || !puter.ai || !puter.ai.speech2txt) {
+            console.warn('Puter.js not available, falling back to Web Speech API');
+            // Fallback: just show that we got audio but can't transcribe
+            return;
+        }
         
-        reader.onloadend = async () => {
-            const base64data = reader.result.split(',')[1];
-            
-            const response = await fetch('/api/transcribe', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    audioData: base64data,
-                    sessionId: sessionId,
-                    mimeType: audioBlob.type
-                })
-            });
-            
-            if (response.ok) {
-                const result = await response.json();
-                if (result.transcript && result.transcript.trim()) {
-                    sendTranscript(result.transcript.trim());
-                }
-            }
-        };
+        // Convert blob to file for Puter.js
+        const audioFile = new File([audioBlob], 'recording.webm', { type: audioBlob.type });
+        
+        // Transcribe using Puter.js (free, no API key needed)
+        const transcript = await puter.ai.speech2txt(audioFile, {
+            model: 'whisper' // or 'gpt-4o-transcribe' for higher accuracy
+        });
+        
+        if (transcript && transcript.trim()) {
+            sendTranscript(transcript.trim());
+        }
     } catch (e) {
-        console.error('Transcription error:', e);
+        console.error('Puter.js transcription error:', e);
     }
 }
 
