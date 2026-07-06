@@ -6,7 +6,7 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="theme-color" content="#0a0a0a">
-    <title>SpkOut - Speech to Text</title>
+    <title>SpkOut - Voice to Text</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
         
@@ -76,7 +76,6 @@
         
         .session-bar button:active {
             transform: scale(0.95);
-            opacity: 0.9;
         }
         
         .share-link {
@@ -117,46 +116,63 @@
             display: flex;
             flex-direction: column;
             padding: 10px 12px;
-            padding-bottom: 140px;
+            padding-bottom: 120px;
             overflow-y: auto;
             -webkit-overflow-scrolling: touch;
         }
         
+        /* Chat styles */
         .transcripts {
             flex: 1;
             display: flex;
             flex-direction: column;
-            gap: 8px;
+            gap: 12px;
         }
         
-        .transcript-item {
-            background: #1a1a1a;
-            border-radius: 10px;
-            padding: 12px;
-            border-left: 3px solid #00e5ff;
+        .chat-item {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        
+        .chat-bubble {
+            max-width: 85%;
+            padding: 12px 16px;
+            border-radius: 18px;
             word-break: break-word;
         }
         
-        .transcript-item .text {
+        .audio-item {
+            align-items: flex-start;
+        }
+        
+        .audio-bubble {
+            background: #1a4d1a;
+            border-radius: 18px 18px 18px 4px;
+        }
+        
+        .audio-bubble audio {
+            max-width: 250px;
+            height: 40px;
+        }
+        
+        .text-item {
+            align-items: flex-start;
+        }
+        
+        .text-bubble {
+            background: #1a1a2e;
+            color: #fff;
             font-size: 15px;
             line-height: 1.5;
-            color: #fff;
+            border-radius: 18px 18px 18px 4px;
+            border-left: 3px solid #00e5ff;
         }
         
-        .transcript-item .time {
+        .chat-time {
             font-size: 11px;
             color: #666;
-            margin-top: 6px;
-        }
-        
-        .transcript-item.live {
-            opacity: 0.85;
-            border-left-color: #ff9500;
-            background: #1f1f1f;
-        }
-        
-        .transcript-item.live .time {
-            color: #ff9500;
+            padding-left: 4px;
         }
         
         .empty-state {
@@ -175,10 +191,6 @@
             height: 48px;
             margin-bottom: 12px;
             opacity: 0.3;
-        }
-        
-        .empty-state p {
-            font-size: 14px;
         }
         
         .bottom-area {
@@ -278,17 +290,9 @@
             display: block;
         }
         
-        .status .listening {
-            color: #00e5ff;
-            margin-bottom: 6px;
+        .status .recording-text {
+            color: #ff3b30;
             font-weight: 600;
-        }
-        
-        .status .partial {
-            color: #aaa;
-            font-size: 13px;
-            line-height: 1.4;
-            max-width: 250px;
         }
 
         .toast {
@@ -312,15 +316,14 @@
             to { opacity: 1; transform: translateX(-50%) translateY(0); }
         }
 
-        /* Mobile specific fixes */
         @media (max-width: 480px) {
             .header h1 { font-size: 16px; }
-            .transcript-item .text { font-size: 14px; }
+            .chat-bubble { max-width: 90%; padding: 10px 14px; }
+            .text-bubble { font-size: 14px; }
             .record-btn { width: 60px; height: 60px; font-size: 22px; }
         }
 
         @media (min-width: 768px) {
-            .transcript-item .text { font-size: 17px; }
             .main { max-width: 600px; margin: 0 auto; width: 100%; }
             .bottom-area { max-width: 600px; left: 50%; transform: translateX(-50%); }
         }
@@ -329,7 +332,7 @@
 <body>
     <div class="header">
         <h1>🎙️ SpkOut</h1>
-        <p>Speak on your phone, see it everywhere</p>
+        <p>Record voice, get transcript</p>
     </div>
     
     <div class="session-bar">
@@ -349,7 +352,7 @@
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
                     <path d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z"/>
                 </svg>
-                <p>Join a session and tap the mic to start</p>
+                <p>Join a session and record a voice note</p>
             </div>
         </div>
     </div>
@@ -366,12 +369,10 @@
     </div>
     
     <div class="status" id="status">
-        <div class="listening">🔴 Listening...</div>
-        <div class="partial" id="partialText"></div>
+        <div class="recording-text">🔴 Recording...</div>
     </div>
 
     <script src="https://js.puter.com/v2/"></script>
     <script src="app.js"></script>
-
 </body>
 </html>

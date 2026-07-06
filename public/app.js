@@ -1,20 +1,19 @@
-// SpkOut - Speech to Text App using MediaRecorder + Server-side Whisper
+// SpkOut - Simple Voice to Text Chat
+// Record voice note → transcribe → show like chat
+
 let ws = null;
 let sessionId = null;
 let mediaRecorder = null;
-let stream = null;
+let audioChunks = [];
 let isRecording = false;
 let transcripts = [];
-let liveText = '';
-let audioChunks = [];
-let recordingInterval = null;
 
 // Generate a random session ID
 function generateSessionId() {
     return Math.random().toString(36).substring(2, 8).toUpperCase();
 }
 
-// Get session from URL or input
+// Get session from URL
 function getSessionFromUrl() {
     const params = new URLSearchParams(window.location.search);
     return params.get('session');
@@ -34,17 +33,15 @@ function joinSession() {
     }
 }
 
-// Connect to WebSocket for a session
+// Connect to WebSocket
 function connectSession(sid) {
     sessionId = sid;
     
     document.getElementById('sessionInput').value = sid;
     document.getElementById('shareSection').style.display = 'flex';
     document.getElementById('shareUrl').value = window.location.href;
-    document.getElementById('emptyState').style.display = 'none';
     
     transcripts = [];
-    liveText = '';
     renderTranscripts();
     
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -67,17 +64,14 @@ function connectSession(sid) {
             renderTranscripts();
         } else if (data.type === 'transcript') {
             transcripts.push(data.data);
-            liveText = '';
             renderTranscripts();
         } else if (data.type === 'clear') {
             transcripts = [];
-            liveText = '';
             renderTranscripts();
         }
     };
     
     ws.onclose = () => {
-        console.log('WebSocket closed, reconnecting...');
         setTimeout(() => connectSession(sid), 2000);
     };
     
@@ -98,42 +92,10 @@ function copyLink() {
     });
 }
 
-// Send audio chunk to server for transcription using Puter.js (free, no API key)
-async function transcribeAudioChunk(audioBlob) {
-    try {
-        // Check if Puter.js is loaded
-        if (typeof puter === 'undefined' || !puter.ai || !puter.ai.speech2txt) {
-            console.warn('Puter.js not available, falling back to Web Speech API');
-            // Fallback: just show that we got audio but can't transcribe
-            return;
-        }
-        
-        // Convert blob to file for Puter.js
-        const audioFile = new File([audioBlob], 'recording.webm', { type: audioBlob.type });
-        
-        // Transcribe using Puter.js (free, no API key needed)
-        const transcript = await puter.ai.speech2txt(audioFile, {
-            model: 'whisper' // or 'gpt-4o-transcribe' for higher accuracy
-        });
-        
-        if (transcript && transcript.trim()) {
-            sendTranscript(transcript.trim());
-        }
-    } catch (e) {
-        console.error('Puter.js transcription error:', e);
-    }
-}
-
-// Start recording
+// Start recording voice note
 async function startRecording() {
-    if (!sessionId) {
-        alert('Please join or create a session first!');
-        return;
-    }
-    
     try {
-        // Get microphone access
-        stream = await navigator.mediaDevices.getUserMedia({ 
+        const stream = await navigator.mediaDevices.getUserMedia({ 
             audio: {
                 echoCancellation: true,
                 noiseSuppression: true,
@@ -141,13 +103,11 @@ async function startRecording() {
             }
         });
         
-        // Determine supported MIME type
         const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') 
             ? 'audio/webm;codecs=opus' 
             : 'audio/webm';
         
         mediaRecorder = new MediaRecorder(stream, { mimeType });
-        
         audioChunks = [];
         
         mediaRecorder.ondataavailable = (event) => {
@@ -160,66 +120,115 @@ async function startRecording() {
             const audioBlob = new Blob(audioChunks, { type: mimeType });
             audioChunks = [];
             
-            if (audioBlob.size > 1000) { // Only send if we have meaningful audio
-                await transcribeAudioChunk(audioBlob);
-            }
+            // Stop all tracks
+            stream.getTracks().forEach(track => track.stop());
             
-            // Restart recording if still in recording mode (continuous)
-            if (isRecording) {
-                try {
-                    mediaRecorder.start(3000); // Capture every 3 seconds
-                } catch (e) {
-                    console.log('Restart failed:', e);
-                    isRecording = false;
-                    updateUIState();
+            if (audioBlob.size > 1000) {
+                // Show audio in chat
+                addAudioToChat(audioBlob);
+                
+                // Transcribe
+                const transcript = await transcribeAudio(audioBlob);
+                if (transcript) {
+                    sendTranscript(transcript);
                 }
             }
+            
+            updateUIState(false);
         };
         
-        mediaRecorder.onerror = (e) => {
-            console.error('MediaRecorder error:', e);
-            isRecording = false;
-            updateUIState();
-        };
-        
-        // Start recording - collect data every 3 seconds
-        mediaRecorder.start(3000);
+        mediaRecorder.start();
         isRecording = true;
-        updateUIState();
-        
-        console.log('Recording started');
+        updateUIState(true);
         
     } catch (err) {
         console.error('Failed to start recording:', err);
-        alert('Microphone access denied or not available. Please allow microphone permission.');
-        isRecording = false;
-        updateUIState();
+        alert('Microphone access denied. Please allow microphone permission.');
     }
 }
 
 // Stop recording
 function stopRecording() {
-    isRecording = false;
-    
     if (mediaRecorder && mediaRecorder.state !== 'inactive') {
         mediaRecorder.stop();
     }
-    
-    if (stream) {
-        stream.getTracks().forEach(track => track.stop());
-        stream = null;
+    isRecording = false;
+}
+
+// Toggle recording
+function toggleRecording() {
+    if (!sessionId) {
+        alert('Please join or create a session first!');
+        return;
     }
     
-    updateUIState();
-    console.log('Recording stopped');
+    if (isRecording) {
+        stopRecording();
+    } else {
+        startRecording();
+    }
+}
+
+// Add audio to chat UI
+function addAudioToChat(audioBlob) {
+    const audioUrl = URL.createObjectURL(audioBlob);
+    const entry = {
+        type: 'audio',
+        audioUrl: audioUrl,
+        timestamp: new Date().toISOString(),
+        id: Date.now()
+    };
+    transcripts.push(entry);
+    renderTranscripts();
+}
+
+// Transcribe audio using Puter.js
+async function transcribeAudio(audioBlob) {
+    try {
+        if (typeof puter === 'undefined' || !puter.ai || !puter.ai.speech2txt) {
+            console.warn('Puter.js not available');
+            return null;
+        }
+        
+        const audioFile = new File([audioBlob], 'voice-note.webm', { type: audioBlob.type });
+        
+        const transcript = await puter.ai.speech2txt(audioFile, {
+            model: 'whisper'
+        });
+        
+        return transcript;
+    } catch (e) {
+        console.error('Transcription error:', e);
+        return null;
+    }
+}
+
+// Send transcript to server
+function sendTranscript(text) {
+    if (!text) return;
+    
+    const entry = {
+        type: 'transcript',
+        text: text,
+        timestamp: new Date().toISOString()
+    };
+    
+    // Add locally first
+    transcripts.push(entry);
+    renderTranscripts();
+    
+    // Send via WebSocket
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify(entry));
+    }
 }
 
 // Update UI state
-function updateUIState() {
+function updateUIState(recording) {
     const recordBtn = document.getElementById('recordBtn');
     const status = document.getElementById('status');
     
-    if (isRecording) {
+    if (recording) {
         recordBtn.classList.add('recording');
         status.classList.add('active');
         recordBtn.textContent = '⏹️';
@@ -230,73 +239,45 @@ function updateUIState() {
     }
 }
 
-// Toggle recording
-function toggleRecording() {
-    if (isRecording) {
-        stopRecording();
-    } else {
-        startRecording();
-    }
-}
-
-// Send transcript via WebSocket
-function sendTranscript(text) {
-    console.log('sendTranscript called with:', text);
-    
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
-        console.error('WebSocket not connected');
-        // Store locally anyway
-        const localEntry = {
-            text: text,
-            timestamp: new Date().toISOString(),
-            id: Date.now()
-        };
-        transcripts.push(localEntry);
-        liveText = '';
-        renderTranscripts();
-        return;
-    }
-    
-    const entry = {
-        type: 'transcript',
-        text: text,
-        timestamp: new Date().toISOString()
-    };
-    
-    ws.send(JSON.stringify(entry));
-}
-
-// Render transcripts
+// Render transcripts (chat style)
 function renderTranscripts() {
     const container = document.getElementById('transcripts');
     
-    if (transcripts.length === 0 && !liveText) {
+    if (transcripts.length === 0) {
         container.innerHTML = `
             <div class="empty-state" id="emptyState">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
                     <path d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z"/>
                 </svg>
-                <p>Join a session and tap the mic to start</p>
+                <p>Join a session and record a voice note</p>
             </div>
         `;
         return;
     }
     
-    let html = transcripts.map((t, index) => `
-        <div class="transcript-item" data-index="${index}">
-            <div class="text">${escapeHtml(t.text)}</div>
-            <div class="time">${formatTime(t.timestamp)}</div>
-        </div>
-    `).join('');
+    let html = '';
     
-    if (liveText) {
-        html += `
-            <div class="transcript-item live">
-                <div class="text">${escapeHtml(liveText)}</div>
-                <div class="time">🎙️ Processing...</div>
-            </div>
-        `;
-    }
+    transcripts.forEach((item) => {
+        if (item.type === 'audio') {
+            html += `
+                <div class="chat-item audio-item">
+                    <div class="chat-bubble audio-bubble">
+                        <audio controls src="${item.audioUrl}"></audio>
+                    </div>
+                    <div class="chat-time">${formatTime(item.timestamp)}</div>
+                </div>
+            `;
+        } else {
+            html += `
+                <div class="chat-item text-item">
+                    <div class="chat-bubble text-bubble">
+                        ${escapeHtml(item.text)}
+                    </div>
+                    <div class="chat-time">${formatTime(item.timestamp)}</div>
+                </div>
+            `;
+        }
+    });
     
     container.innerHTML = html;
     
@@ -315,30 +296,38 @@ function escapeHtml(text) {
 // Format timestamp
 function formatTime(iso) {
     const d = new Date(iso);
-    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-// Copy all text to clipboard
+// Copy all text
 function copyAllText() {
-    if (transcripts.length === 0 && !liveText) {
+    if (transcripts.length === 0) {
         alert('No text to copy yet!');
         return;
     }
     
-    const fullText = transcripts.map(t => t.text).join('\n\n');
+    const textItems = transcripts.filter(t => t.type === 'transcript' || t.text);
+    const fullText = textItems.map(t => t.text).join('\n\n');
+    
+    if (!fullText) {
+        alert('No transcripts yet!');
+        return;
+    }
+    
     navigator.clipboard.writeText(fullText).then(() => {
         showToast('📋 Copied all text!');
     });
 }
 
-// Download all text as file
+// Download text
 function downloadText() {
-    if (transcripts.length === 0 && !liveText) {
+    const textItems = transcripts.filter(t => t.type === 'transcript' || t.text);
+    if (textItems.length === 0) {
         alert('No text to download yet!');
         return;
     }
     
-    const fullText = transcripts.map(t => {
+    const fullText = textItems.map(t => {
         const time = new Date(t.timestamp).toLocaleString();
         return `[${time}]\n${t.text}`;
     }).join('\n\n---\n\n');
@@ -356,14 +345,13 @@ function downloadText() {
     showToast('⬇️ Downloaded!');
 }
 
-// Clear all transcripts
+// Clear all
 function clearTranscripts() {
-    if (transcripts.length === 0 && !liveText) return;
+    if (transcripts.length === 0) return;
     
-    if (!confirm('Clear all text? This cannot be undone.')) return;
+    if (!confirm('Clear all messages? This cannot be undone.')) return;
     
     transcripts = [];
-    liveText = '';
     renderTranscripts();
     
     if (ws && ws.readyState === WebSocket.OPEN) {
@@ -373,7 +361,7 @@ function clearTranscripts() {
     showToast('🗑️ Cleared!');
 }
 
-// Show toast notification
+// Show toast
 function showToast(message) {
     const existing = document.querySelector('.toast');
     if (existing) existing.remove();
@@ -398,7 +386,7 @@ window.onload = () => {
     }
 };
 
-// Handle Enter key in session input
+// Handle Enter key
 document.getElementById('sessionInput')?.addEventListener('keypress', (e) => {
     if (e.key === 'Enter') joinSession();
 });
