@@ -119,43 +119,44 @@ function setupSpeechRecognition() {
         document.getElementById('recordBtn').classList.remove('recording');
         document.getElementById('status').classList.remove('active');
         
-        // Mobile browsers (especially iOS Safari) stop after each utterance.
-        // If we still want to be recording, restart after a tiny delay.
+        // On iOS Safari, continuous mode doesn't work well - it stops after each utterance.
+        // We DON'T auto-restart here because setTimeout breaks user-gesture chain.
+        // Instead, we update the flag and show a visual cue.
         if (isRecording) {
-            // Use a small timeout to avoid recursive loop on iOS
-            setTimeout(() => {
-                if (isRecording) {
-                    try {
-                        recognition.start();
-                    } catch (e) {
-                        console.error('Failed to restart recognition:', e);
-                        isRecording = false;
-                    }
-                }
-            }, 150);
+            console.log('Recognition ended unexpectedly while isRecording=true');
+            isRecording = false;
+            
+            // Show a toast indicating user needs to tap again
+            showToast('🎙️ Tap mic to continue recording');
+            
+            // Update the button to show it's paused, not fully stopped
+            document.getElementById('recordBtn').textContent = '🎤';
         }
     };
     
     recognition.onresult = (event) => {
         let currentInterim = '';
-        let hasFinal = false;
+        let finalText = '';
         
         for (let i = event.resultIndex; i < event.results.length; i++) {
             const transcript = event.results[i][0].transcript;
             
             if (event.results[i].isFinal) {
-                hasFinal = true;
-                // Send final transcript immediately
-                const finalTrimmed = transcript.trim();
-                if (finalTrimmed) {
-                    sendTranscript(finalTrimmed);
-                }
+                finalText += transcript + ' ';
             } else {
                 currentInterim += transcript;
             }
         }
         
-        // Update live text display
+        // Send final transcript immediately
+        if (finalText) {
+            const finalTrimmed = finalText.trim();
+            if (finalTrimmed) {
+                sendTranscript(finalTrimmed);
+            }
+        }
+        
+        // Update live text display (final transcripts + current interim)
         const allFinalText = transcripts.map(t => t.text).join(' ');
         liveText = allFinalText + (currentInterim ? ' ' + currentInterim : '');
         
@@ -171,21 +172,20 @@ function setupSpeechRecognition() {
     
     recognition.onerror = (event) => {
         console.error('Speech recognition error:', event.error);
-        // On mobile, 'no-speech' often fires when user pauses briefly.
-        // 'aborted' fires when we manually stop or switch tabs — ignore those.
         if (event.error === 'not-allowed') {
             alert('Microphone permission denied. Please allow microphone access in your browser settings.');
             isRecording = false;
         } else if (event.error === 'no-speech') {
-            // iOS fires no-speech then immediately ends; onend will handle restart.
-            console.log('No speech detected, will restart via onend if still recording');
+            // On mobile, no-speech often means user paused. The recognition will end naturally.
+            // We let onend handle the cleanup.
+            console.log('No speech detected');
         } else if (event.error === 'network') {
             console.error('Network error during speech recognition');
         } else if (event.error === 'aborted') {
-            // Usually means we stopped it manually — ignore
-            console.log('Speech recognition aborted');
+            console.log('Speech recognition aborted (likely manual stop)');
+        } else {
+            console.error('Unknown speech recognition error:', event.error);
         }
-        // For other errors, do nothing — onend will handle cleanup.
     };
     
     return recognition;
@@ -204,6 +204,10 @@ async function requestMicPermission() {
     }
 }
 
+// Keep track of recognition state for iOS workaround
+let recognitionRestartAttempts = 0;
+const MAX_RESTART_ATTEMPTS = 3;
+
 // Toggle recording
 function toggleRecording() {
     if (!sessionId) {
@@ -217,7 +221,9 @@ function toggleRecording() {
     }
 
     if (isRecording) {
+        // Stop recording
         isRecording = false;
+        recognitionRestartAttempts = 0;
         liveText = '';
         try { 
             recognition.stop(); 
@@ -228,13 +234,21 @@ function toggleRecording() {
         document.getElementById('status').classList.remove('active');
         renderTranscripts();
     } else {
+        // Start recording - on iOS Safari, this MUST be called synchronously from a user gesture
         isRecording = true;
+        recognitionRestartAttempts = 0;
         try {
             recognition.start();
         } catch (e) {
             console.error('recognition.start() failed:', e);
             isRecording = false;
-            alert('Could not start speech recognition. Make sure microphone permission is granted.');
+            
+            // iOS Safari specific: may need to request permission first
+            if (e.message && e.message.includes('permission')) {
+                alert('Microphone permission required. Please allow access and try again.');
+            } else {
+                alert('Could not start speech recognition. Error: ' + e.message);
+            }
         }
     }
 }
