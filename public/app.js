@@ -141,7 +141,10 @@ async function startRecording() {
         mediaRecorder.start();
         
         // Start speech recognition simultaneously
-        startSpeechRecognition();
+        const speechStarted = startSpeechRecognition();
+        if (!speechStarted) {
+            showToast('Recording audio only (speech recognition not available)');
+        }
         
         isRecording = true;
         updateUIState(true);
@@ -159,7 +162,7 @@ function startSpeechRecognition() {
     if (!SpeechRecognition) {
         console.warn('Speech Recognition API not supported in this browser');
         showToast('Speech recognition not supported');
-        return;
+        return false; // Indicate failure
     }
     
     console.log('Starting speech recognition...');
@@ -205,8 +208,8 @@ function startSpeechRecognition() {
         // When recording stops, send the final transcript
         if (finalTranscript.trim()) {
             sendTranscript(finalTranscript.trim());
-            showToast('Transcript added!');
         } else if (!hasReceivedResult) {
+            console.log('No speech detected during recording');
             showToast('No speech detected');
         }
         
@@ -215,15 +218,23 @@ function startSpeechRecognition() {
     
     recognition.onerror = (event) => {
         console.error('Speech recognition error:', event.error);
-        showToast('Error: ' + event.error);
+        if (event.error === 'not-allowed') {
+            showToast('Microphone permission denied');
+        } else if (event.error === 'no-speech') {
+            console.log('No speech detected error');
+        } else {
+            showToast('Speech error: ' + event.error);
+        }
     };
     
     try {
         recognition.start();
         console.log('Speech recognition.start() called successfully');
+        return true; // Success
     } catch (e) {
         console.error('Failed to start recognition:', e);
         showToast('Failed to start speech recognition');
+        return false; // Failure
     }
 }
 
@@ -295,7 +306,14 @@ function addAudioToChat(audioBlob) {
 
 // Send transcript to server
 function sendTranscript(text) {
-    if (!text) return;
+    if (!text) {
+        console.log('No transcript text to send');
+        // Even if no transcript, show the audio was recorded
+        showToast('Audio recorded (no transcript)');
+        return;
+    }
+    
+    console.log('Sending transcript:', text);
     
     const entry = {
         type: 'transcript',
@@ -311,6 +329,8 @@ function sendTranscript(text) {
     if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify(entry));
     }
+    
+    showToast('Transcript added!');
 }
 
 // Update UI state
