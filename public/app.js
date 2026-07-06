@@ -119,18 +119,36 @@ function setupSpeechRecognition() {
         document.getElementById('recordBtn').classList.remove('recording');
         document.getElementById('status').classList.remove('active');
         
-        // On iOS Safari, continuous mode doesn't work well - it stops after each utterance.
-        // We DON'T auto-restart here because setTimeout breaks user-gesture chain.
-        // Instead, we update the flag and show a visual cue.
+        // Mobile browsers stop after each utterance. 
+        // We need to restart if user is still in "recording" mode.
+        // On Android Chrome, we can restart immediately from onend context.
+        // On iOS Safari, we need user to tap again (setTimeout breaks gesture chain).
         if (isRecording) {
-            console.log('Recognition ended unexpectedly while isRecording=true');
-            isRecording = false;
+            console.log('Recognition ended while isRecording=true, attempting restart...');
             
-            // Show a toast indicating user needs to tap again
-            showToast('🎙️ Tap mic to continue recording');
-            
-            // Update the button to show it's paused, not fully stopped
-            document.getElementById('recordBtn').textContent = '🎤';
+            // Try immediate restart first (works on Android Chrome)
+            try {
+                recognition.start();
+                console.log('Immediate restart successful');
+            } catch (e) {
+                console.log('Immediate restart failed:', e.message);
+                
+                // If immediate fails, try with minimal delay
+                // This may work on some Android devices but not iOS
+                setTimeout(() => {
+                    if (isRecording) {
+                        try {
+                            recognition.start();
+                            console.log('Delayed restart successful');
+                        } catch (e2) {
+                            console.log('Delayed restart also failed:', e2.message);
+                            // Give up - show toast to user
+                            isRecording = false;
+                            showToast('🎙️ Tap mic to continue recording');
+                        }
+                    }
+                }, 100);
+            }
         }
     };
     
@@ -210,33 +228,7 @@ async function requestMicPermission() {
 
 // Keep track of recognition state for mobile workaround
 let recognitionRestartAttempts = 0;
-let recognitionRestartInterval = null;
-const MAX_RESTART_ATTEMPTS = 5;
-
-// Start a background polling to restart recognition on mobile
-function startRecognitionPolling() {
-    if (recognitionRestartInterval) clearInterval(recognitionRestartInterval);
-    
-    recognitionRestartInterval = setInterval(() => {
-        if (isRecording && recognition && !document.getElementById('recordBtn').classList.contains('recording')) {
-            // Recognition stopped but we want it running - try to restart
-            console.log('Polling: recognition stopped unexpectedly, attempting restart');
-            try {
-                recognition.start();
-            } catch (e) {
-                // If start fails, it's likely still running or no permission
-                console.log('Polling restart failed:', e.message);
-            }
-        }
-    }, 500); // Check every 500ms
-}
-
-function stopRecognitionPolling() {
-    if (recognitionRestartInterval) {
-        clearInterval(recognitionRestartInterval);
-        recognitionRestartInterval = null;
-    }
-}
+const MAX_RESTART_ATTEMPTS = 3;
 
 // Toggle recording
 function toggleRecording() {
@@ -254,7 +246,6 @@ function toggleRecording() {
         // Stop recording
         isRecording = false;
         recognitionRestartAttempts = 0;
-        stopRecognitionPolling();
         liveText = '';
         try { 
             recognition.stop(); 
@@ -270,11 +261,9 @@ function toggleRecording() {
         recognitionRestartAttempts = 0;
         try {
             recognition.start();
-            startRecognitionPolling(); // Start polling to handle mobile auto-stop
         } catch (e) {
             console.error('recognition.start() failed:', e);
             isRecording = false;
-            stopRecognitionPolling();
             
             if (e.message && e.message.includes('already started')) {
                 // Already running, just make sure UI is correct
