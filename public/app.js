@@ -157,9 +157,12 @@ function startSpeechRecognition() {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     
     if (!SpeechRecognition) {
-        console.warn('Speech Recognition not supported');
+        console.warn('Speech Recognition API not supported in this browser');
+        showToast('Speech recognition not supported');
         return;
     }
+    
+    console.log('Starting speech recognition...');
     
     recognition = new SpeechRecognition();
     recognition.continuous = true;
@@ -167,41 +170,60 @@ function startSpeechRecognition() {
     recognition.lang = 'en-US';
     
     let finalTranscript = '';
+    let hasReceivedResult = false;
+    
+    recognition.onstart = () => {
+        console.log('Speech recognition started');
+    };
     
     recognition.onresult = (event) => {
+        hasReceivedResult = true;
         let interimTranscript = '';
         
         for (let i = event.resultIndex; i < event.results.length; i++) {
             const transcript = event.results[i][0].transcript;
             if (event.results[i].isFinal) {
                 finalTranscript += transcript + ' ';
+                console.log('Final transcript part:', transcript);
             } else {
                 interimTranscript += transcript;
             }
         }
         
+        console.log('Interim:', interimTranscript);
+        console.log('Final so far:', finalTranscript);
+        
         // Show interim text
-        if (interimTranscript) {
+        if (interimTranscript || finalTranscript) {
             showInterimText(finalTranscript + interimTranscript);
         }
     };
     
     recognition.onend = () => {
+        console.log('Speech recognition ended. Final transcript:', finalTranscript);
+        
         // When recording stops, send the final transcript
         if (finalTranscript.trim()) {
             sendTranscript(finalTranscript.trim());
+            showToast('Transcript added!');
+        } else if (!hasReceivedResult) {
+            showToast('No speech detected');
         }
+        
         clearInterimText();
     };
     
     recognition.onerror = (event) => {
         console.error('Speech recognition error:', event.error);
+        showToast('Error: ' + event.error);
     };
     
     try {
         recognition.start();
+        console.log('Speech recognition.start() called successfully');
     } catch (e) {
         console.error('Failed to start recognition:', e);
+        showToast('Failed to start speech recognition');
     }
 }
 
@@ -213,10 +235,10 @@ function showInterimText(text) {
         interimEl.id = 'interimText';
         interimEl.className = 'chat-item text-item interim';
         interimEl.innerHTML = `
-            <div class="chat-bubble text-bubble" style="opacity: 0.7;">
+            <div class="chat-bubble text-bubble" style="opacity: 0.7; border-left-color: #ff9500;">
                 ${escapeHtml(text)}
             </div>
-            <div class="chat-time">Transcribing...</div>
+            <div class="chat-time" style="color: #ff9500;">Transcribing...</div>
         `;
         document.getElementById('transcripts').appendChild(interimEl);
     } else {
