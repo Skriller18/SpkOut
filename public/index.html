@@ -2,218 +2,260 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#0a0a0a">
     <title>SpkOut - Speech to Text</title>
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
+        * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
         
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             background: #0a0a0a;
             color: #fff;
             min-height: 100vh;
+            min-height: 100dvh;
             display: flex;
             flex-direction: column;
+            overflow-x: hidden;
         }
         
         .header {
-            padding: 20px;
+            padding: 12px 16px;
             text-align: center;
             border-bottom: 1px solid #222;
+            flex-shrink: 0;
         }
         
         .header h1 {
-            font-size: 24px;
+            font-size: 18px;
             font-weight: 600;
             color: #00e5ff;
         }
         
         .header p {
-            font-size: 14px;
+            font-size: 12px;
             color: #888;
-            margin-top: 5px;
+            margin-top: 2px;
         }
         
         .session-bar {
             display: flex;
-            gap: 10px;
-            padding: 15px 20px;
+            gap: 8px;
+            padding: 10px 12px;
             background: #111;
             border-bottom: 1px solid #222;
+            flex-shrink: 0;
         }
         
         .session-bar input {
             flex: 1;
-            padding: 12px 16px;
+            padding: 10px 12px;
             border: 1px solid #333;
             border-radius: 10px;
             background: #1a1a1a;
             color: #fff;
-            font-size: 16px;
+            font-size: 15px;
+            min-width: 0;
+            -webkit-appearance: none;
         }
         
         .session-bar button {
-            padding: 12px 20px;
+            padding: 10px 14px;
             border: none;
             border-radius: 10px;
             background: #00e5ff;
             color: #000;
             font-weight: 600;
+            font-size: 14px;
             cursor: pointer;
             white-space: nowrap;
+            -webkit-appearance: none;
         }
         
         .session-bar button:active {
             transform: scale(0.95);
+            opacity: 0.9;
         }
         
         .share-link {
-            padding: 10px 20px;
+            padding: 8px 12px;
             background: #111;
             display: flex;
             align-items: center;
-            gap: 10px;
-            font-size: 13px;
+            gap: 8px;
+            font-size: 12px;
+            flex-shrink: 0;
         }
         
         .share-link input {
             flex: 1;
-            padding: 8px 12px;
+            padding: 8px 10px;
             border: 1px solid #333;
             border-radius: 6px;
             background: #1a1a1a;
             color: #00e5ff;
-            font-size: 13px;
+            font-size: 12px;
+            min-width: 0;
+            -webkit-appearance: none;
         }
         
         .share-link button {
-            padding: 8px 14px;
+            padding: 8px 12px;
             border: 1px solid #333;
             border-radius: 6px;
             background: #222;
             color: #fff;
+            font-size: 12px;
             cursor: pointer;
+            -webkit-appearance: none;
         }
         
         .main {
             flex: 1;
             display: flex;
             flex-direction: column;
-            padding: 20px;
-            padding-bottom: 160px;
+            padding: 10px 12px;
+            padding-bottom: 140px;
             overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
         }
         
         .transcripts {
             flex: 1;
-            overflow-y: auto;
             display: flex;
             flex-direction: column;
-            gap: 12px;
+            gap: 8px;
         }
         
         .transcript-item {
             background: #1a1a1a;
-            border-radius: 12px;
-            padding: 16px;
+            border-radius: 10px;
+            padding: 12px;
             border-left: 3px solid #00e5ff;
+            word-break: break-word;
         }
         
         .transcript-item .text {
-            font-size: 16px;
-            line-height: 1.6;
+            font-size: 15px;
+            line-height: 1.5;
             color: #fff;
         }
         
         .transcript-item .time {
-            font-size: 12px;
+            font-size: 11px;
             color: #666;
-            margin-top: 8px;
+            margin-top: 6px;
+        }
+        
+        .transcript-item.live {
+            opacity: 0.85;
+            border-left-color: #ff9500;
+            background: #1f1f1f;
+        }
+        
+        .transcript-item.live .time {
+            color: #ff9500;
         }
         
         .empty-state {
             text-align: center;
-            padding: 60px 20px;
+            padding: 40px 20px;
             color: #555;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            flex: 1;
         }
         
         .empty-state svg {
-            width: 64px;
-            height: 64px;
-            margin-bottom: 20px;
+            width: 48px;
+            height: 48px;
+            margin-bottom: 12px;
             opacity: 0.3;
         }
         
-        .toolbar {
+        .empty-state p {
+            font-size: 14px;
+        }
+        
+        .bottom-area {
             position: fixed;
             bottom: 0;
             left: 0;
             right: 0;
-            padding: 15px 20px;
-            background: linear-gradient(transparent, #0a0a0a 50%);
+            background: linear-gradient(transparent 0%, #0a0a0a 30%, #0a0a0a 100%);
+            padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
             display: flex;
-            justify-content: center;
+            flex-direction: column;
             align-items: center;
-            gap: 12px;
-            padding-bottom: calc(15px + env(safe-area-inset-bottom));
+            gap: 8px;
             z-index: 50;
         }
         
+        .toolbar {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 8px;
+            width: 100%;
+        }
+        
         .toolbar-btn {
-            padding: 10px 16px;
+            padding: 8px 14px;
             border: 1px solid #333;
             border-radius: 10px;
             background: #1a1a1a;
             color: #fff;
-            font-size: 14px;
+            font-size: 13px;
             cursor: pointer;
             white-space: nowrap;
+            -webkit-appearance: none;
         }
         
         .toolbar-btn:active {
             transform: scale(0.95);
+            background: #252525;
         }
         
         .record-bar {
-            position: fixed;
-            bottom: 70px;
-            left: 0;
-            right: 0;
-            padding: 15px;
             display: flex;
             justify-content: center;
-            gap: 15px;
-            z-index: 50;
+            width: 100%;
         }
         
         .record-btn {
-            width: 72px;
-            height: 72px;
+            width: 64px;
+            height: 64px;
             border-radius: 50%;
             border: none;
             background: #ff3b30;
             color: #fff;
-            font-size: 28px;
+            font-size: 24px;
             cursor: pointer;
             display: flex;
             align-items: center;
             justify-content: center;
-            box-shadow: 0 4px 20px rgba(255, 59, 48, 0.4);
-            transition: transform 0.2s;
+            box-shadow: 0 4px 16px rgba(255, 59, 48, 0.4);
+            transition: transform 0.15s ease, background 0.2s;
+            -webkit-appearance: none;
+            touch-action: manipulation;
         }
         
         .record-btn:active {
-            transform: scale(0.9);
+            transform: scale(0.92);
         }
         
         .record-btn.recording {
             background: #ff9500;
-            animation: pulse 1.5s infinite;
+            animation: pulse 1.2s infinite;
         }
         
         @keyframes pulse {
             0%, 100% { transform: scale(1); }
-            50% { transform: scale(1.05); }
+            50% { transform: scale(1.08); }
         }
         
         .status {
@@ -221,13 +263,15 @@
             top: 50%;
             left: 50%;
             transform: translate(-50%, -50%);
-            background: rgba(0,0,0,0.9);
-            padding: 20px 30px;
-            border-radius: 16px;
-            font-size: 18px;
+            background: rgba(0,0,0,0.92);
+            padding: 16px 24px;
+            border-radius: 14px;
+            font-size: 16px;
             display: none;
             z-index: 100;
             text-align: center;
+            pointer-events: none;
+            min-width: 180px;
         }
         
         .status.active {
@@ -236,18 +280,49 @@
         
         .status .listening {
             color: #00e5ff;
-            margin-bottom: 10px;
+            margin-bottom: 6px;
+            font-weight: 600;
         }
         
         .status .partial {
-            color: #888;
-            font-size: 14px;
+            color: #aaa;
+            font-size: 13px;
+            line-height: 1.4;
+            max-width: 250px;
+        }
+
+        .toast {
+            position: fixed;
+            bottom: 120px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #1a1a1a;
+            color: #fff;
+            padding: 10px 20px;
+            border-radius: 20px;
+            font-size: 13px;
+            z-index: 200;
+            animation: fadeIn 0.25s ease;
+            pointer-events: none;
+            white-space: nowrap;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateX(-50%) translateY(10px); }
+            to { opacity: 1; transform: translateX(-50%) translateY(0); }
+        }
+
+        /* Mobile specific fixes */
+        @media (max-width: 480px) {
+            .header h1 { font-size: 16px; }
+            .transcript-item .text { font-size: 14px; }
+            .record-btn { width: 60px; height: 60px; font-size: 22px; }
         }
 
         @media (min-width: 768px) {
-            .transcript-item .text {
-                font-size: 18px;
-            }
+            .transcript-item .text { font-size: 17px; }
+            .main { max-width: 600px; margin: 0 auto; width: 100%; }
+            .bottom-area { max-width: 600px; left: 50%; transform: translateX(-50%); }
         }
     </style>
 </head>
@@ -258,12 +333,12 @@
     </div>
     
     <div class="session-bar">
-        <input type="text" id="sessionInput" placeholder="Enter session ID or leave empty for new" maxlength="50">
-        <button onclick="joinSession()">Join / Create</button>
+        <input type="text" id="sessionInput" placeholder="Enter session ID or leave empty for new" maxlength="50" autocomplete="off" autocorrect="off" autocapitalize="off">
+        <button onclick="joinSession()">Join</button>
     </div>
     
     <div class="share-link" id="shareSection" style="display:none;">
-        <span>🔗 Share:</span>
+        <span>🔗</span>
         <input type="text" id="shareUrl" readonly>
         <button onclick="copyLink()">Copy</button>
     </div>
@@ -279,14 +354,15 @@
         </div>
     </div>
     
-    <div class="record-bar">
-        <button class="record-btn" id="recordBtn" onclick="toggleRecording()">🎤</button>
-    </div>
-    
-    <div class="toolbar">
-        <button class="toolbar-btn" onclick="copyAllText()">📋 Copy All</button>
-        <button class="toolbar-btn" onclick="downloadText()">⬇️ Download</button>
-        <button class="toolbar-btn" onclick="clearTranscripts()">🗑️ Clear</button>
+    <div class="bottom-area">
+        <div class="record-bar">
+            <button class="record-btn" id="recordBtn" onclick="toggleRecording()">🎤</button>
+        </div>
+        <div class="toolbar">
+            <button class="toolbar-btn" onclick="copyAllText()">📋 Copy</button>
+            <button class="toolbar-btn" onclick="downloadText()">⬇️ Save</button>
+            <button class="toolbar-btn" onclick="clearTranscripts()">🗑️ Clear</button>
+        </div>
     </div>
     
     <div class="status" id="status">

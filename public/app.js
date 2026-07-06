@@ -109,14 +109,8 @@ function setupSpeechRecognition() {
     recognition.interimResults = true;
     recognition.lang = 'en-US';
     
-    // Track accumulated text that hasn't been finalized yet
-    let accumulatedInterim = '';
-    let lastFinalText = '';
-    
     recognition.onstart = () => {
         isRecording = true;
-        accumulatedInterim = '';
-        lastFinalText = transcripts.map(t => t.text).join(' ');
         document.getElementById('recordBtn').classList.add('recording');
         document.getElementById('status').classList.add('active');
     };
@@ -126,51 +120,50 @@ function setupSpeechRecognition() {
         document.getElementById('status').classList.remove('active');
         
         // Mobile browsers (especially iOS Safari) stop after each utterance.
-        // If we still want to be recording, restart immediately.
+        // If we still want to be recording, restart after a tiny delay.
         if (isRecording) {
-            try {
-                recognition.start();
-            } catch (e) {
-                console.error('Failed to restart recognition:', e);
-            }
-        } else {
-            isRecording = false;
+            // Use a small timeout to avoid recursive loop on iOS
+            setTimeout(() => {
+                if (isRecording) {
+                    try {
+                        recognition.start();
+                    } catch (e) {
+                        console.error('Failed to restart recognition:', e);
+                        isRecording = false;
+                    }
+                }
+            }, 150);
         }
     };
     
     recognition.onresult = (event) => {
         let currentInterim = '';
-        let newFinalText = '';
+        let hasFinal = false;
         
         for (let i = event.resultIndex; i < event.results.length; i++) {
             const transcript = event.results[i][0].transcript;
             
             if (event.results[i].isFinal) {
-                newFinalText += transcript + ' ';
+                hasFinal = true;
+                // Send final transcript immediately
+                const finalTrimmed = transcript.trim();
+                if (finalTrimmed) {
+                    sendTranscript(finalTrimmed);
+                }
             } else {
                 currentInterim += transcript;
             }
         }
         
-        // If we got final text, send it and reset interim
-        if (newFinalText) {
-            const finalTrimmed = newFinalText.trim();
-            if (finalTrimmed) {
-                sendTranscript(finalTrimmed);
-                lastFinalText = transcripts.map(t => t.text).join(' ');
-            }
-            accumulatedInterim = '';
-        } else {
-            // No final yet, accumulate interim
-            accumulatedInterim = currentInterim;
-        }
-        
-        // Build display: all final transcripts + accumulated interim
+        // Update live text display
         const allFinalText = transcripts.map(t => t.text).join(' ');
-        liveText = allFinalText + (accumulatedInterim ? ' ' + accumulatedInterim : '');
+        liveText = allFinalText + (currentInterim ? ' ' + currentInterim : '');
         
         // Update status popup
-        document.getElementById('partialText').textContent = accumulatedInterim || allFinalText || 'Listening...';
+        const partialEl = document.getElementById('partialText');
+        if (partialEl) {
+            partialEl.textContent = currentInterim || allFinalText || 'Listening...';
+        }
         
         // Render in main panel
         renderTranscripts();
@@ -184,13 +177,15 @@ function setupSpeechRecognition() {
             alert('Microphone permission denied. Please allow microphone access in your browser settings.');
             isRecording = false;
         } else if (event.error === 'no-speech') {
-            // Don't use setTimeout — it breaks user-gesture chain on mobile.
-            // Instead, let onend handle the restart if isRecording is still true.
+            // iOS fires no-speech then immediately ends; onend will handle restart.
             console.log('No speech detected, will restart via onend if still recording');
         } else if (event.error === 'network') {
             console.error('Network error during speech recognition');
+        } else if (event.error === 'aborted') {
+            // Usually means we stopped it manually — ignore
+            console.log('Speech recognition aborted');
         }
-        // For other errors (aborted, etc.), do nothing — onend will handle cleanup.
+        // For other errors, do nothing — onend will handle cleanup.
     };
     
     return recognition;
@@ -224,7 +219,13 @@ function toggleRecording() {
     if (isRecording) {
         isRecording = false;
         liveText = '';
-        try { recognition.stop(); } catch (e) { /* ignore */ }
+        try { 
+            recognition.stop(); 
+        } catch (e) { 
+            console.log('Stop error:', e);
+        }
+        document.getElementById('recordBtn').classList.remove('recording');
+        document.getElementById('status').classList.remove('active');
         renderTranscripts();
     } else {
         isRecording = true;
@@ -260,7 +261,7 @@ function renderTranscripts() {
     
     if (transcripts.length === 0 && !liveText) {
         container.innerHTML = `
-            <div class="empty-state">
+            <div class="empty-state" id="emptyState">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
                     <path d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z"/>
                 </svg>
@@ -277,18 +278,22 @@ function renderTranscripts() {
         </div>
     `).join('');
     
-    // Add live text at the bottom if exists (show interim even when paused briefly)
+    // Add live text at the bottom if exists
     if (liveText) {
         html += `
-            <div class="transcript-item" style="opacity: 0.7; border-left-color: #ff9500;">
+            <div class="transcript-item live">
                 <div class="text">${escapeHtml(liveText)}</div>
-                <div class="time" style="color: #ff9500;">🎙️ Speaking...</div>
+                <div class="time">🎙️ Speaking...</div>
             </div>
         `;
     }
     
     container.innerHTML = html;
-    container.scrollTop = container.scrollHeight;
+    
+    // Smooth scroll to bottom
+    requestAnimationFrame(() => {
+        container.scrollTop = container.scrollHeight;
+    });
 }
 
 // Escape HTML
