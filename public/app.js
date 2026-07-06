@@ -152,8 +152,12 @@ function setupSpeechRecognition() {
         if (finalText) {
             const finalTrimmed = finalText.trim();
             if (finalTrimmed) {
+                console.log('Sending final transcript:', finalTrimmed);
                 sendTranscript(finalTrimmed);
             }
+        } else if (currentInterim) {
+            // Even if no final text, update live text for display
+            console.log('Interim text:', currentInterim);
         }
         
         // Update live text display (final transcripts + current interim)
@@ -287,8 +291,19 @@ function toggleRecording() {
 
 // Send transcript via WebSocket
 function sendTranscript(text) {
+    console.log('sendTranscript called with:', text, 'WebSocket state:', ws ? ws.readyState : 'no ws');
+    
     if (!ws || ws.readyState !== WebSocket.OPEN) {
-        console.error('WebSocket not connected');
+        console.error('WebSocket not connected, transcript not sent:', text);
+        // Store locally anyway so user sees it
+        const localEntry = {
+            text: text,
+            timestamp: new Date().toISOString(),
+            id: Date.now()
+        };
+        transcripts.push(localEntry);
+        liveText = '';
+        renderTranscripts();
         return;
     }
     
@@ -298,6 +313,7 @@ function sendTranscript(text) {
         timestamp: new Date().toISOString()
     };
     
+    console.log('Sending via WebSocket:', entry);
     ws.send(JSON.stringify(entry));
 }
 
@@ -317,8 +333,9 @@ function renderTranscripts() {
         return;
     }
     
-    let html = transcripts.map(t => `
-        <div class="transcript-item">
+    // Build transcript HTML - ensure all transcripts are shown including the most recent
+    let html = transcripts.map((t, index) => `
+        <div class="transcript-item" data-index="${index}">
             <div class="text">${escapeHtml(t.text)}</div>
             <div class="time">${formatTime(t.timestamp)}</div>
         </div>
