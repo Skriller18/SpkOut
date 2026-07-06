@@ -182,25 +182,68 @@ function addAudioToChat(audioBlob) {
     renderTranscripts();
 }
 
-// Transcribe audio using Puter.js
+// Transcribe audio using browser's built-in Speech Recognition API
 async function transcribeAudio(audioBlob) {
-    try {
-        if (typeof puter === 'undefined' || !puter.ai || !puter.ai.speech2txt) {
-            console.warn('Puter.js not available');
-            return null;
+    return new Promise((resolve) => {
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        
+        if (!SpeechRecognition) {
+            console.warn('Speech Recognition not supported');
+            resolve(null);
+            return;
         }
         
-        const audioFile = new File([audioBlob], 'voice-note.webm', { type: audioBlob.type });
+        // Create audio element to play back
+        const audioUrl = URL.createObjectURL(audioBlob);
+        const audio = new Audio(audioUrl);
         
-        const transcript = await puter.ai.speech2txt(audioFile, {
-            model: 'whisper'
-        });
+        // Create recognition instance
+        const recognition = new SpeechRecognition();
+        recognition.continuous = true;
+        recognition.interimResults = false;
+        recognition.lang = 'en-US';
         
-        return transcript;
-    } catch (e) {
-        console.error('Transcription error:', e);
-        return null;
-    }
+        let finalTranscript = '';
+        
+        recognition.onresult = (event) => {
+            for (let i = event.resultIndex; i < event.results.length; i++) {
+                if (event.results[i].isFinal) {
+                    finalTranscript += event.results[i][0].transcript + ' ';
+                }
+            }
+        };
+        
+        recognition.onend = () => {
+            resolve(finalTranscript.trim() || null);
+        };
+        
+        recognition.onerror = (event) => {
+            console.error('Speech recognition error:', event.error);
+            resolve(null);
+        };
+        
+        // Start recognition and play audio
+        try {
+            recognition.start();
+            audio.play().catch(e => console.log('Audio play error:', e));
+            
+            // Stop recognition when audio ends
+            audio.onended = () => {
+                setTimeout(() => {
+                    recognition.stop();
+                }, 500);
+            };
+            
+            // Fallback: stop after 30 seconds
+            setTimeout(() => {
+                recognition.stop();
+            }, 30000);
+            
+        } catch (e) {
+            console.error('Failed to start recognition:', e);
+            resolve(null);
+        }
+    });
 }
 
 // Send transcript to server
