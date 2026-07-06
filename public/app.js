@@ -122,12 +122,19 @@ function setupSpeechRecognition() {
     };
     
     recognition.onend = () => {
-        isRecording = false;
         document.getElementById('recordBtn').classList.remove('recording');
         document.getElementById('status').classList.remove('active');
         
+        // Mobile browsers (especially iOS Safari) stop after each utterance.
+        // If we still want to be recording, restart immediately.
         if (isRecording) {
-            recognition.start();
+            try {
+                recognition.start();
+            } catch (e) {
+                console.error('Failed to restart recognition:', e);
+            }
+        } else {
+            isRecording = false;
         }
     };
     
@@ -171,15 +178,35 @@ function setupSpeechRecognition() {
     
     recognition.onerror = (event) => {
         console.error('Speech recognition error:', event.error);
-        if (event.error === 'no-speech') {
-            recognition.stop();
-            setTimeout(() => {
-                if (isRecording) recognition.start();
-            }, 500);
+        // On mobile, 'no-speech' often fires when user pauses briefly.
+        // 'aborted' fires when we manually stop or switch tabs — ignore those.
+        if (event.error === 'not-allowed') {
+            alert('Microphone permission denied. Please allow microphone access in your browser settings.');
+            isRecording = false;
+        } else if (event.error === 'no-speech') {
+            // Don't use setTimeout — it breaks user-gesture chain on mobile.
+            // Instead, let onend handle the restart if isRecording is still true.
+            console.log('No speech detected, will restart via onend if still recording');
+        } else if (event.error === 'network') {
+            console.error('Network error during speech recognition');
         }
+        // For other errors (aborted, etc.), do nothing — onend will handle cleanup.
     };
     
     return recognition;
+}
+
+// Request microphone permission explicitly (needed for some mobile browsers)
+async function requestMicPermission() {
+    try {
+        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            // Stop all tracks immediately — we just needed the permission prompt
+            stream.getTracks().forEach(t => t.stop());
+        }
+    } catch (e) {
+        console.warn('getUserMedia permission request failed or not supported:', e);
+    }
 }
 
 // Toggle recording
@@ -188,20 +215,26 @@ function toggleRecording() {
         alert('Please join or create a session first!');
         return;
     }
-    
+
     if (!recognition) {
         recognition = setupSpeechRecognition();
         if (!recognition) return;
     }
-    
+
     if (isRecording) {
         isRecording = false;
         liveText = '';
-        recognition.stop();
+        try { recognition.stop(); } catch (e) { /* ignore */ }
         renderTranscripts();
     } else {
         isRecording = true;
-        recognition.start();
+        try {
+            recognition.start();
+        } catch (e) {
+            console.error('recognition.start() failed:', e);
+            isRecording = false;
+            alert('Could not start speech recognition. Make sure microphone permission is granted.');
+        }
     }
 }
 
